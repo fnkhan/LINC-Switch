@@ -39,9 +39,13 @@
 %%------------------------------------------------------------------------------
 
 %% @doc Starts the application.
--spec start(any(), any()) -> {ok, pid()}.
+-spec start(any(), any()) -> {ok, pid()} | {error, Reason :: term()}.
 start(_StartType, _StartArgs) ->
-    linc_capable_sup:start_link().
+    try linc_capable_sup:start_link()
+    catch
+        throw:Reason ->
+            {error, Reason}
+    end.
 
 %% @doc Stops the application.
 -spec stop(any()) -> ok.

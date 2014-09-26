@@ -29,17 +29,18 @@
 
 -include("linc_logger.hrl").
 
+
 %%------------------------------------------------------------------------------
 %% API functions
 %%------------------------------------------------------------------------------
 
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
 start_link() ->
+    {ok, LogicalSwitches} = application:get_env(linc, logical_switches),
+    ?DEBUG("sys.config logical switches:~n~p", [LogicalSwitches]),
+    linc_ports_mapping:initialize(LogicalSwitches),
     {ok, Pid} = supervisor:start_link(?MODULE, []),
     start_ofconfig(Pid),
-
-    ?DEBUG("sys.config: ~p", [application:get_env(linc,
-                                                  logical_switches)]),
     Config = case application:get_env(linc, of_config) of
                  {ok, enabled} ->
                      ?DEBUG("Old startup: ~p",
