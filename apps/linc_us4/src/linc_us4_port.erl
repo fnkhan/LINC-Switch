@@ -641,8 +641,11 @@ ports_for_switch(SwitchId, Config) ->
     {ports, Ports} = lists:keyfind(ports, 1, Opts),
     QueuesStatus = lists:keyfind(queues_status, 1, Opts),
     Queues = lists:keyfind(queues, 1, Opts),
-    [begin
-         {port, PortNo, [QueuesStatus | [Queues | PortConfig]]}
+    [case {QueuesStatus, lists:keyfind(PortNo, 2, Queues)} of
+             X when {true, false} orelse {false, Anything} ->
+                 {port, PortNo, [PortConfig]};
+             {true, {_, _, QueuesOpts}} ->
+                 {port, PortNo, QueuesOpts ++ PortConfig}
      end || {port, PortNo, PortConfig} <- Ports].
 
 check_port_config(Flag, Config) ->

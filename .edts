@@ -1,4 +1,4 @@
 :name "LINC-Switch"
 :node-sname "linc-edts"
-:lib-dirs '("apps" "deps" "scripts")
+:lib-dirs '("apps" "deps" "scripts" "test")
 :app-include-dirs '("include")

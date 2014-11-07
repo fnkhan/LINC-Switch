@@ -33,16 +33,22 @@
 -define(MOCKED, [logic, port_native, packet]).
 -define(SWITCH_ID, 0).
 -define(PORT_NUMS, [1,2,3]).
+-define(QUEUE_NUM_FOR_PORT(PortNo), case PortNo of
+                                        3 -> none;
+                                        _ -> PortNo
+                                    end).
 
 %% Tests -----------------------------------------------------------------------
 
 port_config_test_() ->
-    {setup, fun port_config_test_setup/0, fun teardown/1,
-     {foreach, fun foreach_setup/0, fun foreach_teardown/1,
+    {setup, fun port_config_test_setup/0, fun port_config_test_teardown/1,
+     {foreach, fun port_config_foreach_setup/0, fun foreach_teardown/1,
       [{"Port has right OF Port No",
         fun port_should_have_right_number_set/0},
        {"Port has right OF Port Name",
-        fun port_should_have_right_name_set/0}]}}.
+        fun port_should_have_right_name_set/0},
+       {"Port should be started with correct config",
+        fun port_should_get_correct_queues_config/0}]}}.
 
 port_functionality_test_() ->
     {setup, fun port_funcionality_setup/0, fun teardown/1,
@@ -105,7 +111,6 @@ port_should_have_right_name_set() ->
          end || {port, CapableNo, Opts} <- get_logical_ports()],
 
     %% WHEN
-    %% Nothing blows up
 
     %% THEN
     #ofp_port_desc_reply{body = Ports} = linc_us4_port:get_desc(?SWITCH_ID),
@@ -113,6 +118,21 @@ port_should_have_right_name_set() ->
          ExpectedName = proplists:get_value(Actual#ofp_port.port_no, Expected),
          ?assertEqual(ExpectedName, Actual#ofp_port.name)
      end || Actual <- Ports].
+
+port_should_get_correct_queues_config() ->
+    {queues, ExpectedQueuesOpts} = queues(true),
+    PortInitArgsMatcher = fun(CapableNo) -> [?SWITCH_ID, {port, CapableNo, '_'}] end,
+    [begin
+         [_, {_,_, PortOpts}] =
+             meck:capture(1, linc_us4_port, init,
+                          [PortInitArgsMatcher(CapableNo)], 1),
+         {port, CapableNo, QOpts} = lists:keyfind(CapableNo, 2, ExpectedQueuesOpts),
+         [?assertMatch(Opt, lists:keyfind(Key, 1, PortOpts))
+          || Opt = {Key, Value} <- QOpts]
+     end || {port, CapableNo, _} <- get_logical_ports()].
+
+port_should_attach_queues_correctly() ->
+    ok.
 
 
 port_mod() ->
@@ -296,17 +316,29 @@ routing_fun_invoked_test(ExpectedRoutingFun) ->
 %% Fixtures --------------------------------------------------------------------
 
 port_config_test_setup() ->
-    setup(config).
+    ok = meck:new(linc_us4_queue, [stub_all]),
+    ok = meck:new(linc_us4_port, [passthrough]),
+    setup(config, _WithQueues = true).
+
+port_config_test_teardown(X) ->
+    ok = meck:unload(linc_us4_queue),
+    ok = meck:unload(linc_us4_port),
+    teardown(X).
+
+port_config_foreach_setup() ->
+    meck:reset(linc_us4_port),
+    meck:reset(linc_us4_queue),
+    foreach_setup().
 
 port_funcionality_setup() ->
-    setup(funcionality).
+    setup(funcionality, _WithQueues = false).
 
-setup(Type) ->
+setup(Type, WithQueues) ->
     mock(?MOCKED),
     linc:create(?SWITCH_ID),
     linc_us4_test_utils:add_logic_path(),
     {ok, _Pid} = linc_us4_sup:start_link(?SWITCH_ID),
-    Config = ports_without_queues(Type),
+    Config = logical_swich_config(Type, WithQueues),
     application:load(linc),
     application:set_env(linc, logical_switches, Config).
 
@@ -321,6 +353,9 @@ foreach_setup() ->
     {ok, Switches} = application:get_env(linc, logical_switches),
     ok = linc_us4_port:initialize(?SWITCH_ID, Switches).
 
+foreach_teardown(_) ->
+    ok = linc_us4_port:terminate(?SWITCH_ID).
+
 sync_routing_setup() ->
     application:set_env(linc, sync_routing, true),
     foreach_setup().
@@ -329,14 +364,12 @@ async_routing_setup() ->
     application:set_env(linc, sync_routing, false),
     foreach_setup().
 
-foreach_teardown(_) ->
-    ok = linc_us4_port:terminate(?SWITCH_ID).
-
 %% Helpers --------------------------------------------------------------------
 
-ports_without_queues(Type) ->
+logical_swich_config(Type, WithQueues) ->
     [{switch, 0,
-      [{ports, ports(Type)}, {queues_status, disabled}, {queues, []}]}].
+      [{ports, ports(Type)}, queues_status(WithQueues),
+       queues(WithQueues)]}].
 
 ports(config) ->
     [DefaultPort | _] = ?PORT_NUMS,
@@ -356,6 +389,20 @@ extended_port_opts(PortNo) ->
     [{port_no, LogicalPortNo},
      {port_name, "Banshee" ++ integer_to_list(LogicalPortNo)}
      | default_port_opts(PortNo)].
+
+queues_status(false) ->
+    {queues_status, disabled};
+queues_status(true) ->
+    {queues_status, enabled}.
+
+queues(false) ->
+    {queues, []};
+queues(true) ->
+    {queues,
+     [{port, PortNo, [{port_rate,{100,mbps}},
+                      {port_queues, [{?QUEUE_NUM_FOR_PORT(PortNo),
+                                     [{min_rate,0}, {max_rate,200}]}]}]}
+      || PortNo <- ?PORT_NUMS, ?QUEUE_NUM_FOR_PORT(PortNo) /= none]}.
 
 get_logical_ports() ->
     {ok, [{switch, _, Config}]} = application:get_env(linc, logical_switches),
